@@ -4,8 +4,8 @@
 
 - Cluster Elastic bersifat **air-gapped** (Elasticsearch/Kibana tidak reachable langsung dari internet). Cluster on-prem sudah berlisensi **Enterprise**.
 - Laptop BYOD secara default hanya punya koneksi **internet**, tidak punya akses ke jaringan internal.
-- Koneksi ke cluster hanya tersedia setelah **VPN Netskope aktif**.
-- VPN Netskope mensyaratkan **device posturing**: salah satu syaratnya adalah Elastic Defend sudah terinstall.
+- Koneksi ke cluster hanya tersedia setelah **VPN aktif**.
+- VPN mensyaratkan **device posturing**: salah satu syaratnya adalah Elastic Defend sudah terinstall.
 - Ini menimbulkan masalah *chicken-and-egg*: Elastic Defend butuh enroll ke Fleet (butuh akses ke cluster) → akses ke cluster butuh VPN aktif → VPN aktif butuh Elastic Defend sudah terinstall.
 - **Data laptop BYOD boleh berada di luar on-prem** (tidak ada requirement data residency ketat untuk data ini).
 
@@ -20,7 +20,7 @@ Laptop BYOD wajib berada di jaringan lokal kantor untuk instalasi & enrollment a
 ### Cara Kerja
 1. Laptop terhubung ke jaringan kantor (Wi-Fi/LAN internal) yang punya akses langsung ke Fleet Server.
 2. Elastic Agent + integrasi Elastic Defend diinstall dan enroll ke Fleet Server menggunakan enrollment token.
-3. Setelah enroll, Elastic Defend aktif → device posturing Netskope mendeteksi Defend terinstall → VPN bisa diaktifkan.
+3. Setelah enroll, Elastic Defend aktif → device posturing mendeteksi Defend terinstall → VPN bisa diaktifkan.
 4. Selanjutnya, laptop dipakai di luar kantor: VPN aktif dulu → baru dapat jalur ke cluster untuk update policy/artifact & kirim alert. Proteksi tetap enforce lokal dari cache walau VPN mati sementara.
 
 ### Kelebihan
