@@ -1,4 +1,4 @@
-# Perbandingan Metode Onboarding Elastic Defend — Laptop BYOD di Cluster Air-Gapped
+# Perbandingan Metode Onboarding Elastic Defend pada Laptop BYOD di Cluster Air-Gapped
 
 ## Konteks
 
