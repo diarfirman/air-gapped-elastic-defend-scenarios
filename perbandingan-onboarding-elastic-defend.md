@@ -1,4 +1,4 @@
-# Perbandingan Metode Onboarding Elastic Defend pada Laptop BYOD di Cluster Air-Gapped
+# Perbandingan Metode Onboarding Elastic Defend — Laptop BYOD di Cluster Air-Gapped (v2)
 
 ## Konteks
 
@@ -22,6 +22,29 @@ Laptop BYOD wajib berada di jaringan lokal kantor untuk instalasi & enrollment a
 2. Elastic Agent + integrasi Elastic Defend diinstall dan enroll ke Fleet Server menggunakan enrollment token.
 3. Setelah enroll, Elastic Defend aktif → device posturing mendeteksi Defend terinstall → VPN bisa diaktifkan.
 4. Selanjutnya, laptop dipakai di luar kantor: VPN aktif dulu → baru dapat jalur ke cluster untuk update policy/artifact & kirim alert. Proteksi tetap enforce lokal dari cache walau VPN mati sementara.
+
+> **Referensi resmi:** [Configure offline endpoints and air-gapped environments](https://www.elastic.co/docs/solutions/security/configure-elastic-defend/configure-offline-endpoints-air-gapped-environments), [Configure updates for protection artifacts](https://www.elastic.co/docs/solutions/security/configure-elastic-defend/configure-updates-for-protection-artifacts), [Run Elastic Agents in an air-gapped environment](https://www.elastic.co/docs/reference/fleet/air-gapped), [Fleet enrollment tokens](https://www.elastic.co/docs/reference/fleet/fleet-enrollment-tokens), [Elastic Agent health status](https://www.elastic.co/docs/reference/fleet/agent-health-status), [Install Elastic Defend (Fleet enrollment required, no standalone)](https://www.elastic.co/docs/solutions/security/configure-elastic-defend/install-elastic-defend)
+
+### Arsitektur
+
+```
+┌───────────────────────┐        (1) Instalasi & enroll Elastic
+│     Laptop BYOD       │        Defend saat di jaringan kantor
+│  Elastic Agent +      │─────────────────────┐
+│  Elastic Defend       │                     │
+└──────────┬────────────┘                     ▼
+           │                         ┌───────────────────────────────┐
+           │ (2) Defend terinstall   │   Cluster On-Prem             │
+           │ -> device posturing     │   (Air-Gapped)                │
+           │    lolos                │  ┌─────────────────────┐      │
+           │                         │  │ Fleet Server        │      │
+           ▼                         │  │ Elasticsearch       │      │
+    ┌────────────────┐               │  │ Kibana              │      │
+    │ VPN Checking   │─────────────► │  └─────────────────────┘      │
+    │ (posturing OK) │  (3) Trafik   │  Tidak ada akses masuk        │
+    └────────────────┘  operasional  │ dari internet (fully closed)  │
+                       lewat VPN     └───────────────────────────────┘
+```
 
 ### Kelebihan
 - Tidak perlu membuka celah baru di perimeter jaringan — cluster tetap sepenuhnya tertutup dari internet.
@@ -50,6 +73,42 @@ Publish port/endpoint tertentu dari cluster Elastic on-prem ke internet lewat re
 3. Laptop BYOD bisa langsung enroll & install Elastic Defend lewat internet ke endpoint yang di-publish ini.
 4. Setelah Defend terinstall, device posturing lolos, VPN bisa aktif untuk trafik selanjutnya.
 
+> **Referensi resmi:** [What is Fleet Server?](https://www.elastic.co/docs/reference/fleet/fleet-server), [Deploy on-premises and self-managed Fleet Server](https://www.elastic.co/docs/reference/fleet/add-fleet-server-on-prem), [Elastic Agent to proxy to Elasticsearch (reference architecture)](https://www.elastic.co/docs/manage-data/ingest/ingest-reference-architectures/agent-proxy), [Elastic Agent deployment models with mutual TLS](https://www.elastic.co/docs/reference/fleet/mutual-tls), [One-way and mutual TLS certificate flow](https://www.elastic.co/docs/reference/fleet/tls-overview), [Secure connections to Fleet Server](https://www.elastic.co/docs/reference/fleet/secure-connections), [Fleet enrollment tokens](https://www.elastic.co/docs/reference/fleet/fleet-enrollment-tokens)
+
+### Arsitektur
+
+```
+┌─────────────────────┐
+│     Laptop BYOD     │
+│  Elastic Agent +    │
+│  Elastic Defend     │
+└──────────┬──────────┘
+           │ (1) Enroll & kirim data
+           │     langsung lewat internet
+           ▼
+   ┌─────────────────┐
+   │     Internet    │
+   └────────┬────────┘
+            │ TLS / mTLS
+            ▼
+┌──────────────────────────────┐
+│  Reverse Proxy / Load        │
+│  Balancer (mTLS, rate limit, │
+│  IP allowlist, TLS publik)   │
+└──────────────┬───────────────┘
+               │ port 8220 (Fleet Server)
+               │ + jalur data plane ke ES
+               ▼
+   ┌───────────────────────┐
+   │   Cluster On-Prem     │
+   │  ┌─────────────────┐  │
+   │  │ Fleet Server    │  │
+   │  │ Elasticsearch   │  │
+   │  │ Kibana          │  │
+   │  └─────────────────┘  │
+   └───────────────────────┘
+```
+
 ### Kelebihan
 - Tidak perlu kehadiran fisik di kantor — onboarding bisa dari mana saja.
 - Scalable untuk organisasi besar/tersebar dan BYOD yang sepenuhnya remote.
@@ -76,6 +135,42 @@ Buat deployment Elastic Cloud Hosted (ECH) yang reachable dari mana pun untuk me
 2. Laptop BYOD enroll & kirim data Elastic Defend langsung ke ECH lewat internet — proses ini semulus SaaS security tool pada umumnya.
 3. Cluster on-prem air-gapped dikonfigurasi sebagai **remote cluster client** untuk CCS ke ECH — cluster on-prem yang inisiasi koneksi keluar (outgoing-only), ECH tidak pernah menghubungi balik ke on-prem. Tidak ada port inbound baru yang perlu dibuka di jaringan internal.
 4. SOC/analyst di on-prem melakukan query/investigasi data endpoint BYOD lewat CCS, sementara data operasional sehari-hari (server internal, dsb.) tetap di cluster on-prem seperti biasa.
+
+> **Referensi resmi:** [Remote clusters — connection modes](https://www.elastic.co/docs/deploy-manage/remote-clusters/connection-modes), [Remote clusters overview](https://www.elastic.co/docs/deploy-manage/remote-clusters), [Cross-cluster search](https://www.elastic.co/docs/solutions/search/cross-cluster-search), [Add a Fleet Server on Elastic Cloud](https://www.elastic.co/docs/reference/fleet/add-fleet-server-cloud), [Fleet deployment models](https://www.elastic.co/docs/reference/fleet/deployment-models), [Remote clusters security models (API key vs certificate)](https://www.elastic.co/docs/deploy-manage/remote-clusters/security-models), [ES|QL cross-clusters licensing](https://www.elastic.co/docs/explore-analyze/query-filter/languages/esql-cross-clusters), [Remote clusters with certificate-based security](https://www.elastic.co/docs/deploy-manage/remote-clusters/remote-clusters-cert)
+
+### Arsitektur
+
+```
+┌─────────────────────┐
+│     Laptop BYOD     │
+│  Elastic Agent +    │
+│  Elastic Defend     │
+└──────────┬──────────┘
+           │ (1) Enroll & kirim data
+           │     langsung lewat internet
+           ▼
+┌────────────────────────────────┐
+│   Elastic Cloud Hosted (ECH)   │
+│  ┌──────────────────────────┐  │
+│  │ Fleet Server (bawaan)    │  │
+│  │ Elasticsearch            │  │
+│  │ Kibana                   │  │
+│  └──────────────────────────┘  │
+└───────────────┬────────────────┘
+                │ (2) Cross-Cluster Search (CCS)
+                │     koneksi outgoing-only
+                │     diinisiasi dari on-prem
+                ▲
+┌───────────────┴─────────────────────┐
+│   Cluster On-Prem (Air-Gapped)      │
+│  ┌────────────────────────────┐     │
+│  │ Elasticsearch              │     │
+│  │  (remote cluster client)   │     │
+│  │ Kibana (query SOC/analyst) │     │
+│  └────────────────────────────┘     │
+│  Tidak ada inbound baru dibuka      │
+└─────────────────────────────────────┘
+```
 
 ### Kelebihan
 - **Setup Fleet Server paling ringan** — tidak perlu reverse proxy atau mTLS custom karena ECH sudah menyediakannya secara default.
@@ -119,7 +214,7 @@ Alasan utama:
 - Tidak ada isu data residency karena data BYOD memang diizinkan berada di luar on-prem.
 
 Langkah lanjutan yang disarankan sebelum implementasi penuh:
-1. Uji coba (POC) enrollment BYOD ke Fleet Server ECH dan verifikasi alur device-posturing Netskope berjalan seperti yang diharapkan.
+1. Uji coba (POC) enrollment BYOD ke Fleet Server ECH dan verifikasi alur device-posturing berjalan seperti yang diharapkan.
 2. Konfigurasi remote cluster (CCS) dari on-prem ke ECH menggunakan **API-key security model** (bukan cert-based) karena cukup trust satu arah, sesuai desain outgoing-only.
 3. Hitung estimasi biaya data-out ECH berdasarkan proyeksi volume query CCS dari tim SOC/analyst.
 4. Tentukan apakah cukup query on-demand (CCS) atau perlu alerting real-time tambahan yang berjalan langsung di ECH.
