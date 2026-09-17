@@ -2,13 +2,14 @@
 
 ## Konteks
 
-- Cluster Elastic bersifat **air-gapped** (Elasticsearch/Kibana tidak reachable langsung dari internet).
+- Cluster Elastic bersifat **air-gapped** (Elasticsearch/Kibana tidak reachable langsung dari internet). Cluster on-prem sudah berlisensi **Enterprise**.
 - Laptop BYOD secara default hanya punya koneksi **internet**, tidak punya akses ke jaringan internal.
 - Koneksi ke cluster hanya tersedia setelah **VPN Netskope aktif**.
 - VPN Netskope mensyaratkan **device posturing**: salah satu syaratnya adalah Elastic Defend sudah terinstall.
 - Ini menimbulkan masalah *chicken-and-egg*: Elastic Defend butuh enroll ke Fleet (butuh akses ke cluster) → akses ke cluster butuh VPN aktif → VPN aktif butuh Elastic Defend sudah terinstall.
+- **Data laptop BYOD boleh berada di luar on-prem** (tidak ada requirement data residency ketat untuk data ini).
 
-Dua metode berikut membahas cara memutus siklus tersebut.
+Tiga metode berikut membahas cara memutus siklus tersebut.
 
 ---
 
@@ -26,7 +27,6 @@ Laptop BYOD wajib berada di jaringan lokal kantor untuk instalasi & enrollment a
 - Tidak perlu membuka celah baru di perimeter jaringan — cluster tetap sepenuhnya tertutup dari internet.
 - Arsitektur paling sederhana; tidak perlu reverse proxy, mTLS, atau komponen tambahan.
 - Risiko keamanan terendah — permukaan serangan (attack surface) tidak bertambah.
-- Selaras dengan prinsip air-gapped yang sudah ada (tidak ada pengecualian akses).
 
 ### Kekurangan
 - **Butuh kehadiran fisik** laptop di kantor — tidak berjalan untuk BYOD yang sepenuhnya remote/tidak pernah ke kantor.
@@ -35,61 +35,93 @@ Laptop BYOD wajib berada di jaringan lokal kantor untuk instalasi & enrollment a
 - Kurang scalable untuk organisasi dengan banyak laptop baru atau tim yang tersebar secara geografis.
 
 ### Cocok Untuk
-- Organisasi dengan kebijakan wajib onboarding on-site (hari pertama kerja di kantor, dsb).
-- Prioritas keamanan/kepatuhan air-gapped yang ketat, tidak ingin menambah exposure sama sekali.
+- Organisasi dengan kebijakan wajib onboarding on-site.
+- Skenario di mana mayoritas laptop BYOD memang rutin ke kantor.
 
 ---
 
 ## Metode 2: Expose Fleet Server (+ Jalur Elasticsearch) via Reverse Proxy
 
-Publish port/endpoint tertentu dari cluster Elastic ke internet lewat reverse proxy, dengan hardening keamanan, sehingga laptop bisa enroll & terhubung tanpa harus ke kantor dulu.
+Publish port/endpoint tertentu dari cluster Elastic on-prem ke internet lewat reverse proxy, dengan hardening keamanan, sehingga laptop bisa enroll & terhubung tanpa harus ke kantor dulu.
 
 ### Cara Kerja
-1. Fleet Server (port default **8220**) di-publish ke internet lewat reverse proxy/load balancer — ini pola resmi yang didukung Elastic untuk deployment on-prem/hybrid.
-2. **Penting**: Fleet Server hanya menangani *control plane* (enrollment, policy, check-in) — bukan *data plane*. Jalur terpisah ke Elasticsearch tetap diperlukan agar Elastic Defend bisa kirim alert/event. Ini bisa lewat reverse proxy terpisah atau fitur *proxy output* Elastic Agent.
-3. Laptop BYOD (walau baru pertama kali dan belum VPN) bisa langsung enroll & install Elastic Defend lewat internet ke endpoint yang di-publish ini.
-4. Setelah Defend terinstall, device posturing lolos, VPN bisa aktif, dan selanjutnya trafik bisa lewat VPN seperti biasa (opsional — expose publik bisa tetap dipertahankan sebagai jalur cadangan).
+1. Fleet Server on-prem (port default **8220**) di-publish ke internet lewat reverse proxy/load balancer.
+2. Fleet Server hanya menangani *control plane* (enrollment, policy, check-in) — bukan *data plane*. Jalur terpisah ke Elasticsearch tetap diperlukan agar Elastic Defend bisa kirim alert/event, lewat reverse proxy terpisah atau fitur *proxy output* Elastic Agent.
+3. Laptop BYOD bisa langsung enroll & install Elastic Defend lewat internet ke endpoint yang di-publish ini.
+4. Setelah Defend terinstall, device posturing lolos, VPN bisa aktif untuk trafik selanjutnya.
 
 ### Kelebihan
-- Tidak perlu kehadiran fisik di kantor — onboarding bisa dilakukan dari mana saja, kapan saja.
-- Scalable untuk organisasi besar/tersebar, dan cocok untuk BYOD yang sepenuhnya remote.
-- Mendukung update policy/artifact lebih rutin karena laptop tidak harus menunggu VPN aktif untuk terhubung.
+- Tidak perlu kehadiran fisik di kantor — onboarding bisa dari mana saja.
+- Scalable untuk organisasi besar/tersebar dan BYOD yang sepenuhnya remote.
 
 ### Kekurangan
-- **Menambah attack surface** — ada komponen cluster (Fleet Server, jalur Elasticsearch) yang jadi reachable dari internet, walau melalui reverse proxy.
-- Kompleksitas setup jauh lebih tinggi: perlu reverse proxy, sertifikat TLS dari CA publik, konfigurasi timeout untuk long-polling, dan idealnya **mutual TLS (mTLS)** agar hanya device sah yang bisa connect.
-- **mTLS butuh lisensi Enterprise** dan versi Fleet Server tertentu (8.19.19+ / 9.3.8+ / 9.4.4+ / 9.5.0+) — ada biaya tambahan jika belum punya lisensi ini.
-- Fleet Server **tidak punya IP allowlisting/rate limiting native** — kontrol ini harus dibangun sendiri di layer reverse proxy/WAF.
-- Enrollment token adalah API key Elasticsearch tanpa expiry otomatis — perlu proses manual untuk rotasi/revoke agar tidak jadi celah keamanan jangka panjang.
+- **Menambah attack surface** — Fleet Server & jalur Elasticsearch jadi reachable dari internet, walau via reverse proxy.
+- Kompleksitas setup tinggi: reverse proxy, TLS dari CA publik, konfigurasi timeout long-polling, dan idealnya **mutual TLS (mTLS)**.
+- mTLS butuh versi Fleet Server tertentu (8.19.19+ / 9.3.8+ / 9.4.4+ / 9.5.0+) — lisensi Enterprise sudah tersedia di kasus ini, jadi bukan blocker biaya.
+- Fleet Server **tidak punya IP allowlisting/rate limiting native** — harus dibangun di layer reverse proxy/WAF.
+- Enrollment token adalah API key Elasticsearch tanpa expiry otomatis — perlu proses manual rotasi/revoke.
 - Perlu maintenance berkelanjutan: sertifikat, proxy, monitoring akses dari internet ke komponen cluster.
 
 ### Cocok Untuk
-- Organisasi dengan banyak BYOD remote yang tidak realistis diminta ke kantor.
-- Tim yang sudah punya kapasitas untuk mengelola reverse proxy, TLS/mTLS, dan lisensi Enterprise Elastic.
+- Organisasi dengan banyak BYOD remote yang tidak realistis diminta ke kantor, tapi tetap ingin semua infrastruktur (termasuk Fleet Server) dikelola sendiri di on-prem.
+
+---
+
+## Metode 3: Elastic Cloud Hosted (ECH) untuk Endpoint + Cross-Cluster Search (CCS) Outgoing-Only dari On-Prem
+
+Buat deployment Elastic Cloud Hosted (ECH) yang reachable dari mana pun untuk menampung enrollment & data Elastic Defend BYOD. Cluster on-prem air-gapped dikonfigurasi outgoing-only untuk query data dari ECH via Cross-Cluster Search (CCS).
+
+### Cara Kerja
+1. Buat deployment ECH — otomatis punya **Fleet Server bawaan** (bagian dari Integrations Server) yang internet-facing dengan TLS terkelola Elastic, tanpa perlu bangun reverse proxy sendiri.
+2. Laptop BYOD enroll & kirim data Elastic Defend langsung ke ECH lewat internet — proses ini semulus SaaS security tool pada umumnya.
+3. Cluster on-prem air-gapped dikonfigurasi sebagai **remote cluster client** untuk CCS ke ECH — cluster on-prem yang inisiasi koneksi keluar (outgoing-only), ECH tidak pernah menghubungi balik ke on-prem. Tidak ada port inbound baru yang perlu dibuka di jaringan internal.
+4. SOC/analyst di on-prem melakukan query/investigasi data endpoint BYOD lewat CCS, sementara data operasional sehari-hari (server internal, dsb.) tetap di cluster on-prem seperti biasa.
+
+### Kelebihan
+- **Setup Fleet Server paling ringan** — tidak perlu reverse proxy atau mTLS custom karena ECH sudah menyediakannya secara default.
+- Cluster air-gapped tetap **outgoing-only**, tidak ada exposure baru ke jaringan internal.
+- CCS murni federated query saat search time (bukan replikasi) — cocok karena data BYOD memang boleh berada di luar on-prem.
+- Lisensi Enterprise yang sudah dimiliki cluster on-prem sudah cukup untuk fitur CCS lanjutan (ES|QL cross-cluster search), asal sisi ECH juga di tier yang mendukung.
+- Skalabel untuk BYOD remote tanpa menambah beban operasional reverse proxy di sisi on-prem.
+
+### Kekurangan
+- Menambah komponen infrastruktur baru (deployment ECH terpisah) dan biaya langganan cloud.
+- Traffic CCS ditagih sebagai **data-out** di sisi ECH — perlu diperhitungkan untuk volume query yang sering.
+- Bukan reference architecture resmi Elastic yang "dijamin" — kombinasi dua fitur (CCS + Fleet Server ECH) yang masing-masing didukung, tapi kombinasinya perlu divalidasi/diuji sendiri di lingkungan Anda.
+- Kalau butuh alerting/dashboard real-time yang setara data lokal (bukan cuma query on-demand), mungkin perlu tambahan setup alerting yang jalan langsung di ECH.
+- Latensi tambahan untuk query cross-cluster dibanding data yang tersimpan lokal (tidak dikuantifikasi resmi oleh Elastic, tapi merupakan konsekuensi inheren arsitektur federated search).
+
+### Cocok Untuk
+- Kasus ini secara spesifik: data BYOD boleh di luar on-prem, lisensi Enterprise sudah ada, dan ingin menghindari kompleksitas membangun reverse proxy + mTLS sendiri.
 
 ---
 
 ## Tabel Perbandingan Ringkas
 
-| Kriteria | Metode 1: On-site Provisioning | Metode 2: Reverse Proxy Expose |
-|---|---|---|
-| Kehadiran fisik ke kantor | Wajib | Tidak perlu |
-| Kompleksitas setup | Rendah | Tinggi |
-| Penambahan attack surface | Tidak ada | Ada (perlu mitigasi) |
-| Kebutuhan lisensi tambahan | Tidak ada | Enterprise (untuk mTLS) |
-| Skalabilitas untuk remote BYOD | Rendah | Tinggi |
-| Kecepatan onboarding | Bergantung logistik kantor | Bisa langsung, dari mana saja |
-| Maintenance berkelanjutan | Minimal | Signifikan (proxy, TLS, monitoring) |
-| Kesesuaian dengan prinsip air-gapped murni | Tinggi | Sebagian (ada exception terkontrol) |
+| Kriteria | Metode 1: On-site Provisioning | Metode 2: Reverse Proxy Expose | Metode 3: ECH + CCS Outgoing-Only |
+|---|---|---|---|
+| Kehadiran fisik ke kantor | Wajib | Tidak perlu | Tidak perlu |
+| Kompleksitas setup | Rendah | Tinggi | Sedang (tanpa perlu bangun reverse proxy/mTLS sendiri untuk Fleet) |
+| Penambahan attack surface di sisi on-prem | Tidak ada | Ada (perlu mitigasi) | Tidak ada (on-prem tetap outgoing-only) |
+| Kebutuhan lisensi tambahan | Tidak ada | Tidak ada (Enterprise sudah ada) | Tidak ada tambahan besar (Enterprise sudah ada); ada biaya langganan ECH + data-out |
+| Skalabilitas untuk remote BYOD | Rendah | Tinggi | Tinggi |
+| Data residency BYOD | Di on-prem | Di on-prem | Di ECH (cloud) — **sesuai kebutuhan kasus ini** |
+| Maintenance berkelanjutan | Minimal | Signifikan (proxy, TLS, monitoring) | Sedang (kelola deployment ECH, biaya data-out, validasi CCS) |
+| Kesesuaian dengan prinsip air-gapped (isolasi jaringan on-prem) | Tinggi | Sebagian (ada exception terkontrol) | Tinggi (on-prem tetap tanpa inbound baru) |
 
 ## Rekomendasi
 
-Untuk kasus di mana **sebagian besar laptop BYOD rutin ke kantor**, Metode 1 lebih sederhana dan aman — jadikan default, dan gunakan hanya untuk kasus reguler.
+Berdasarkan kondisi terbaru (data BYOD boleh di luar on-prem, lisensi Enterprise sudah tersedia): **Metode 3 (ECH + CCS outgoing-only) adalah pilihan yang paling direkomendasikan** untuk kasus ini.
 
-Untuk laptop yang **benar-benar tidak pernah ke kantor** (remote-first hire, dsb.), Metode 2 bisa jadi jalur khusus (bukan default untuk semua), dengan syarat minimal:
-- mTLS aktif untuk autentikasi device di level Fleet Server.
-- Jalur Elasticsearch untuk data plane turut di-hardening, bukan cuma Fleet Server.
-- Proses rotasi/revoke enrollment token yang jelas.
-- Monitoring akses reverse proxy sebagai bagian dari deteksi anomali.
+Alasan utama:
+- Menghilangkan kebutuhan membangun & memelihara reverse proxy + mTLS custom (beban operasional Metode 2).
+- Tidak menambah attack surface di jaringan on-prem — prinsip air-gapped tetap terjaga dari sisi on-prem.
+- Tidak ada isu data residency karena data BYOD memang diizinkan berada di luar on-prem.
 
-Pendekatan **hybrid** (Metode 1 sebagai default, Metode 2 sebagai jalur khusus untuk kasus remote murni) kemungkinan paling realistis untuk kebanyakan organisasi.
+Langkah lanjutan yang disarankan sebelum implementasi penuh:
+1. Uji coba (POC) enrollment BYOD ke Fleet Server ECH dan verifikasi alur device-posturing Netskope berjalan seperti yang diharapkan.
+2. Konfigurasi remote cluster (CCS) dari on-prem ke ECH menggunakan **API-key security model** (bukan cert-based) karena cukup trust satu arah, sesuai desain outgoing-only.
+3. Hitung estimasi biaya data-out ECH berdasarkan proyeksi volume query CCS dari tim SOC/analyst.
+4. Tentukan apakah cukup query on-demand (CCS) atau perlu alerting real-time tambahan yang berjalan langsung di ECH.
+
+Metode 1 tetap relevan sebagai jalur onboarding cadangan untuk laptop yang kebetulan sedang berada di kantor, dan Metode 2 bisa disimpan sebagai opsi jika ke depannya kebijakan data residency berubah (data BYOD wajib tetap di on-prem).
